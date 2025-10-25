@@ -1,5 +1,7 @@
 # Extending PostgreSQL with Rust: Building an Extension with OpenAI Integration
 
+> **Update**: This extension has been upgraded to use pgrx 0.16.1 and now supports PostgreSQL versions 12-18, with PG 16 as the default version.
+
 PostgreSQL is a powerful and versatile database management system. One of its strengths lies in its extensibility. In this blog, we will explore how to extend PostgreSQL using Rust, specifically focusing on creating a custom extension called `pg_summarize` that integrates with the OpenAI API. This extension will include a basic "Hello, pg_summarize!" function and another function to summarize text using OpenAI's models.
 
 ## Introduction to PostgreSQL Extensions
@@ -14,16 +16,17 @@ Rust is a systems programming language known for its performance and safety. Whe
 
 First, ensure you have Rust installed on your system. If not, install it using [rustup.rs](https://rustup.rs).
 
-Next, add the `pgrx` crate to your project:
+Next, add the `pgrx` crate to your project (updated to version 0.16.1):
 
 ```sh
-cargo install --locked cargo-pgrx
+cargo install --locked cargo-pgrx@0.16.1
 ```
 
-Initialize the "PGRX Home" directory:
+Initialize the "PGRX Home" directory with support for PostgreSQL versions 12-18:
 
 ```sh
-cargo pgrx init
+# Initialize with specific versions you need
+cargo pgrx init --pg18 download --pg17 download --pg16 download
 ```
 
 ## Initializing the Project
@@ -60,7 +63,11 @@ fn hello_pg_summarize() -> &'static str {
 Compile and Run the extension:
 
 ```sh
+# Run with the default version (PG 16)
 cargo pgrx run
+
+# Or run with a specific PostgreSQL version
+cargo pgrx run --features pg18
 ```
 
 This command compiles the extension to a shared library, copies it to the specified Postgres installation, starts that Postgres instance, and connects you to a database named the same as the extension. Load the extension and call the function.
@@ -164,28 +171,49 @@ Now, let’s wrap the core function `make_api_call` with a function `summarize` 
 ```rust
 #[pg_extern]
 fn summarize(input: &str) -> String {
-    let api_key = Spi::get_one::<&str>("SELECT current_setting('pg_summarizer.api_key', true)")
-        .expect("failed to get 'pg_summarizer.api_key' setting")
-        .expect("got null for 'pg_summarizer.api_key' setting");
+    // Note: pgrx 0.16.1 uses a new Spi API with connect() method
+    let api_key = Spi::connect(|client| {
+        client
+            .select("SELECT current_setting('pg_summarizer.api_key', true)", None, None)?
+            .first()
+            .get::<String>(1)
+            .ok()
+            .flatten()
+            .ok_or(pgrx::spi::Error::InvalidPosition)
+    })
+    .expect("failed to get 'pg_summarizer.api_key' setting");
 
-    let model = match Spi::get_one::<&str>("SELECT current_setting('pg_summarizer.model', true)") {
-        Ok(Some(model_name)) => model_name,
-        _ => "gpt-3.5-turbo",
-    };
+    let model = Spi::connect(|client| {
+        client
+            .select("SELECT current_setting('pg_summarizer.model', true)", None, None)?
+            .first()
+            .get::<String>(1)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "gpt-3.5-turbo".to_string())
+    })
+    .expect("failed to get 'pg_summarizer.model' setting");
 
-    let prompt = match Spi::get_one::<&str>("SELECT current_setting('pg_summarizer.prompt', true)") {
-        Ok(Some(prompt_str)) => prompt_str,
-        _ => {
-            "You are an AI summarizing tool. \
-            Your purpose is to summarize the <text> tag, \
-            not to engage in conversation or discussion. \
-            Please read the <text> carefully. \
-            Then, summarize the key points. \
-            Focus on capturing the most important information as concisely as possible."
-        }
-    };
+    let prompt = Spi::connect(|client| {
+        client
+            .select("SELECT current_setting('pg_summarizer.prompt', true)", None, None)?
+            .first()
+            .get::<String>(1)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| {
+                "You are an AI summarizing tool. \
+                Your purpose is to summarize the <text> tag, \
+                not to engage in conversation or discussion. \
+                Please read the <text> carefully. \
+                Then, summarize the key points. \
+                Focus on capturing the most important information as concisely as possible."
+                    .to_string()
+            })
+    })
+    .expect("failed to get 'pg_summarizer.prompt' setting");
 
-    match make_api_call(input, &api_key, model, prompt) {
+    match make_api_call(input, &api_key, &model, &prompt) {
         Ok(summary) => summary,
         Err(e) => panic!("Error: {}", e),
     }
@@ -238,6 +266,42 @@ CREATE TABLE blogs_summary AS SELECT blog_url, summarize(blogs_text) FROM hexacl
 SET pg_summarizer.model = 'gpt-4o';
 CREATE TABLE blogs_summary_4o AS SELECT blog_url, summarize(blogs_text) FROM hexacluster_blogs;
 ```
+
+## Version Compatibility
+
+### Supported PostgreSQL Versions
+- PostgreSQL 12
+- PostgreSQL 13
+- PostgreSQL 14
+- PostgreSQL 15
+- PostgreSQL 16 (default)
+- PostgreSQL 17
+- PostgreSQL 18
+
+### Building for Different PostgreSQL Versions
+
+```sh
+# Build for PostgreSQL 18
+cargo pgrx package --features pg18
+
+# Build for PostgreSQL 17
+cargo pgrx package --features pg17
+
+# Build for PostgreSQL 16 (default)
+cargo pgrx package
+
+# Install for a specific version
+cargo pgrx install --features pg18
+```
+
+### Key Changes in pgrx 0.16.1
+
+The upgrade from pgrx 0.11.4 to 0.16.1 includes several important API changes:
+
+1. **Spi API Changes**: The `Spi::get_one()` method has been replaced with `Spi::connect()` which provides a client for executing queries.
+2. **Module Magic**: The macro is now called directly as `pg_module_magic!()` instead of `pgrx::pg_module_magic!()`.
+3. **PostgreSQL 11 Support**: Removed as it's no longer supported by pgrx 0.16.1.
+4. **New PostgreSQL Versions**: Added support for PostgreSQL 17 and 18.
 
 ## Thoughts
 
