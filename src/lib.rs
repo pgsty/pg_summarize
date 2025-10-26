@@ -3,6 +3,9 @@ use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::json;
 
+// Re-export pgrx for the binary
+pub use pgrx;
+
 pg_module_magic!();
 
 #[pg_extern]
@@ -14,7 +17,7 @@ fn hello_pg_summarize() -> &'static str {
 fn summarize(input: &str) -> String {
     let api_key = Spi::connect(|client| {
         client
-            .select("SELECT current_setting('pg_summarizer.api_key', true)", None, None)?
+            .select("SELECT current_setting('pg_summarizer.api_key', true)", None, &[])?
             .first()
             .get::<String>(1)
             .ok()
@@ -23,20 +26,20 @@ fn summarize(input: &str) -> String {
     })
     .expect("failed to get 'pg_summarizer.api_key' setting");
 
-    let model = Spi::connect(|client| {
-        client
-            .select("SELECT current_setting('pg_summarizer.model', true)", None, None)?
+    let model = Spi::connect(|client| -> Result<String, pgrx::spi::Error> {
+        Ok(client
+            .select("SELECT current_setting('pg_summarizer.model', true)", None, &[])?
             .first()
             .get::<String>(1)
             .ok()
             .flatten()
-            .unwrap_or_else(|| "gpt-3.5-turbo".to_string())
+            .unwrap_or_else(|| "gpt-3.5-turbo".to_string()))
     })
     .expect("failed to get 'pg_summarizer.model' setting");
 
-    let prompt = Spi::connect(|client| {
-        client
-            .select("SELECT current_setting('pg_summarizer.prompt', true)", None, None)?
+    let prompt = Spi::connect(|client| -> Result<String, pgrx::spi::Error> {
+        Ok(client
+            .select("SELECT current_setting('pg_summarizer.prompt', true)", None, &[])?
             .first()
             .get::<String>(1)
             .ok()
@@ -49,7 +52,7 @@ fn summarize(input: &str) -> String {
                 Then, summarize the key points. \
                 Focus on capturing the most important information as concisely as possible."
                     .to_string()
-            })
+            }))
     })
     .expect("failed to get 'pg_summarizer.prompt' setting");
 

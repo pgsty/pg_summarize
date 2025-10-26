@@ -1,13 +1,17 @@
 [package]
 name = "pg_summarize"
 version = "0.0.1"
-edition = "2025"
+edition = "2021"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "pgrx_embed_pg_summarize"
+path = "src/bin/pgrx_embed.rs"
 
 [features]
-default = ["pg17"]
+default = ["pg18"]
 pg13 = ["pgrx/pg13", "pgrx-tests/pg13" ]
 pg14 = ["pgrx/pg14", "pgrx-tests/pg14" ]
 pg15 = ["pgrx/pg15", "pgrx-tests/pg15" ]
